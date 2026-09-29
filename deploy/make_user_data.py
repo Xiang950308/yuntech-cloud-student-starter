@@ -31,14 +31,14 @@ def build(commit):
 set -euo pipefail
 dnf install -y nginx python3
 id inspection >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin inspection
-install -d -m 755 /opt/inspection
+install -d -m 755 /opt/inspection /etc/inspection
 base64 --decode <<'W3_ARCHIVE' | tar -xz -C /opt/inspection
 PAYLOAD
 W3_ARCHIVE
 install -m 644 /opt/inspection/deploy/nginx.conf /etc/nginx/nginx.conf
 cat > /etc/systemd/system/inspection.service <<'W3_UNIT'
 [Unit]
-Description=W3 inspection service
+Description=Inspection service
 After=network.target
 [Service]
 Type=simple
