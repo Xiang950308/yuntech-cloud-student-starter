@@ -43,6 +43,10 @@ After=network.target
 [Service]
 Type=simple
 User=inspection
+PermissionsStartOnly=true
+RuntimeDirectory=inspection
+Environment=INSPECTION_AUTH_FILE=/run/inspection/app.env
+ExecStartPre=/usr/bin/install -m 640 -o inspection -g inspection /etc/inspection/app.env /run/inspection/app.env
 WorkingDirectory=/opt/inspection/app
 ExecStart=/usr/bin/python3 /opt/inspection/app/service.py
 Restart=on-failure

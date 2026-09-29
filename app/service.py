@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
 
-def make_server(version_file, port=8080, auth_file="/etc/inspection/app.env"):
+def make_server(version_file, port=8080, auth_file=None):
+    auth_file = auth_file or os.environ.get("INSPECTION_AUTH_FILE", "/etc/inspection/app.env")
     version = Path(version_file).read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", version):
         raise ValueError("version must contain the deployed 40-character Git commit SHA")
