@@ -35,7 +35,7 @@ PY
 DEPLOY_COMMIT=${target_info[0]}
 TARGET_IP=${target_info[1]}
 KEY_PATH=${target_info[2]}
-USER_DATA=$(mktemp "$ROOT/.local/deploy-user-data.XXXXXX")
+USER_DATA="$ROOT/.local/deploy-user-data.$$"
 trap 'rm -f "$USER_DATA"' EXIT
 
 bash "$ROOT/deploy/make-user-data.sh" "$COMMIT" "$USER_DATA" >/dev/null
