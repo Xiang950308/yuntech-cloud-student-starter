@@ -50,6 +50,7 @@ User=inspection
 PermissionsStartOnly=true
 RuntimeDirectory=inspection
 Environment=INSPECTION_AUTH_FILE=/run/inspection/app.env
+Environment=HOME=/tmp
 ExecStartPre=/usr/bin/install -m 640 -o inspection -g inspection /etc/inspection/app.env /run/inspection/app.env
 Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/opt/inspection/app
