@@ -10,6 +10,9 @@ import re
 from urllib.parse import urlsplit
 
 
+DB_FIELDS = ("event_id", "device_id", "observed_at", "type", "note")
+
+
 def make_server(version_file, port=8080, auth_file=None):
     auth_file = auth_file or os.environ.get("INSPECTION_AUTH_FILE", "/etc/inspection/app.env")
     version = Path(version_file).read_text(encoding="utf-8").strip()
@@ -25,7 +28,49 @@ def make_server(version_file, port=8080, auth_file=None):
     except FileNotFoundError:
         pass
     auth_configured = all(tokens.values())
+    db = {}
+    try:
+        for line in Path(auth_file).read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"):
+                db[key] = value
+    except FileNotFoundError:
+        pass
+    db_configured = all(db.get(key) for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"))
     events = {}
+
+    def db_connection():
+        try:
+            import psycopg2
+            return psycopg2.connect(host=db["DB_HOST"], dbname=db["DB_NAME"], user=db["DB_USER"],
+                                    password=db["DB_PASSWORD"], sslmode="verify-full",
+                                    sslrootcert="/etc/inspection/rds-ca.pem", connect_timeout=5)
+        except (ImportError, KeyError):
+            raise RuntimeError("database driver is unavailable")
+
+    def ensure_schema(connection):
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id VARCHAR(64) PRIMARY KEY,
+                    device_id VARCHAR(32) NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    type VARCHAR(16) NOT NULL,
+                    note TEXT,
+                    received_at TIMESTAMPTZ NOT NULL
+                )
+            """)
+        connection.commit()
+
+    def row_to_event(row):
+        event = dict(zip(DB_FIELDS + ("received_at",), row))
+        received_at = event["received_at"]
+        if hasattr(received_at, "isoformat"):
+            event["received_at"] = received_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return event
+
+    def event_matches(left, right):
+        return all(left.get(field) == right.get(field) for field in DB_FIELDS)
 
     def role_for(handler):
         scheme, separator, supplied = handler.headers.get("Authorization", "").partition(" ")
@@ -60,7 +105,8 @@ def make_server(version_file, port=8080, auth_file=None):
             path = urlsplit(self.path).path
             if path == "/health":
                 json_response(self, 200, {"status": "ok", "service": "inspection", "version": version,
-                                          "started_at": started, "auth_configured": auth_configured})
+                                          "started_at": started, "auth_configured": auth_configured,
+                                          "db_configured": db_configured})
                 return
             if path == "/":
                 html = """<!doctype html><html><head><meta charset="utf-8"><title>Inspection events</title></head>
@@ -93,17 +139,44 @@ document.getElementById('load').onclick = async () => {
                 if role != "operator":
                     error(self, 401 if role is None else 403, "unauthorized" if role is None else "forbidden")
                 else:
-                    json_response(self, 200, list(events.values())[-50:][::-1])
+                    if not db_configured:
+                        json_response(self, 200, list(events.values())[-50:][::-1])
+                        return
+                    try:
+                        with db_connection() as connection:
+                            ensure_schema(connection)
+                            with connection.cursor() as cursor:
+                                cursor.execute("SELECT event_id, device_id, observed_at, type, note, received_at "
+                                               "FROM events ORDER BY received_at DESC LIMIT 50")
+                                result = [row_to_event(row) for row in cursor.fetchall()]
+                        json_response(self, 200, result)
+                    except Exception:
+                        error(self, 503, "database_unavailable")
                 return
             match = re.fullmatch(r"/events/([^/]+)", path)
             if match:
                 role = role_for(self)
                 if role != "operator":
                     error(self, 401 if role is None else 403, "unauthorized" if role is None else "forbidden")
-                elif match.group(1) not in events:
-                    error(self, 404, "not_found")
                 else:
-                    json_response(self, 200, events[match.group(1)])
+                    if not db_configured:
+                        event = events.get(match.group(1))
+                    else:
+                        try:
+                            with db_connection() as connection:
+                                ensure_schema(connection)
+                                with connection.cursor() as cursor:
+                                    cursor.execute("SELECT event_id, device_id, observed_at, type, note, received_at "
+                                                   "FROM events WHERE event_id = %s", (match.group(1),))
+                                    row = cursor.fetchone()
+                                    event = row_to_event(row) if row else None
+                        except Exception:
+                            error(self, 503, "database_unavailable")
+                            return
+                    if event is None:
+                        error(self, 404, "not_found")
+                    else:
+                        json_response(self, 200, event)
                 return
             error(self, 404, "not_found")
 
@@ -161,13 +234,46 @@ document.getElementById('load').onclick = async () => {
             if "note" in payload and (not isinstance(payload["note"], str) or len(payload["note"]) > 200):
                 error(self, 400, "invalid_value", "note")
                 return
-            if payload["event_id"] in events:
-                error(self, 409, "duplicate", "event_id")
-                return
             event = dict(payload)
             event["received_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-            events[event["event_id"]] = event
-            json_response(self, 201, event)
+            if not db_configured:
+                existing = events.get(event["event_id"])
+                if existing is not None:
+                    if event_matches(existing, event):
+                        json_response(self, 200, existing)
+                    else:
+                        error(self, 409, "duplicate", "event_id")
+                    return
+                events[event["event_id"]] = event
+                json_response(self, 201, event)
+                return
+            try:
+                with db_connection() as connection:
+                    ensure_schema(connection)
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "INSERT INTO events (event_id, device_id, observed_at, type, note, received_at) "
+                            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (event_id) DO NOTHING "
+                            "RETURNING event_id, device_id, observed_at, type, note, received_at",
+                            (event["event_id"], event["device_id"], event["observed_at"], event["type"],
+                             event.get("note"), event["received_at"]),
+                        )
+                        row = cursor.fetchone()
+                        if row is not None:
+                            saved = row_to_event(row)
+                            connection.commit()
+                            json_response(self, 201, saved)
+                            return
+                        cursor.execute("SELECT event_id, device_id, observed_at, type, note, received_at "
+                                       "FROM events WHERE event_id = %s", (event["event_id"],))
+                        existing = row_to_event(cursor.fetchone())
+                        connection.commit()
+                if event_matches(existing, event):
+                    json_response(self, 200, existing)
+                else:
+                    error(self, 409, "duplicate", "event_id")
+            except Exception:
+                error(self, 503, "database_unavailable")
 
         def log_message(self, fmt, *args):
             pass  # Never log request paths, bodies, headers or query strings.

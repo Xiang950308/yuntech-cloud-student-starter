@@ -8,6 +8,9 @@ COMMIT=${1:-HEAD}
 
 [[ -f "$AUTH_FILE" ]] || { echo "Missing .local/app.env" >&2; exit 1; }
 [[ "$(stat -c '%a' "$AUTH_FILE")" == "600" ]] || { echo ".local/app.env must be mode 600" >&2; exit 1; }
+DB_FILE="$ROOT/.local/db.env"
+[[ -f "$DB_FILE" ]] || { echo "Missing .local/db.env" >&2; exit 1; }
+[[ "$(stat -c '%a' "$DB_FILE")" == "600" ]] || { echo ".local/db.env must be mode 600" >&2; exit 1; }
 [[ -f "$RESOURCES" ]] || { echo "Missing .local/resources.json" >&2; exit 1; }
 
 readarray -t target_info < <(python3 - "$ROOT" "$COMMIT" <<'PY'
@@ -46,7 +49,7 @@ read -r -p "Type DEPLOY to continue: " approval
 
 SSH=(ssh -i "$KEY_PATH" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "ec2-user@$TARGET_IP")
 "${SSH[@]}" "sudo bash -s" < "$USER_DATA"
-"${SSH[@]}" "sudo install -m 600 /dev/stdin /etc/inspection/app.env" < "$AUTH_FILE"
+cat "$AUTH_FILE" "$DB_FILE" | "${SSH[@]}" "sudo install -m 600 /dev/stdin /etc/inspection/app.env"
 "${SSH[@]}" "sudo systemctl restart inspection"
 
 python3 - "$TARGET_IP" "$DEPLOY_COMMIT" <<'PY'
@@ -56,7 +59,8 @@ import urllib.request
 
 with urllib.request.urlopen(f"http://{sys.argv[1]}/health", timeout=10) as response:
     body = json.load(response)
-if response.status != 200 or body.get("version") != sys.argv[2] or body.get("auth_configured") is not True:
+if response.status != 200 or body.get("version") != sys.argv[2] or body.get("auth_configured") is not True \
+    or body.get("db_configured") is not True:
     raise SystemExit("health check failed")
 print("Health OK: HTTP 200, version matches commit, auth_configured=true")
 PY

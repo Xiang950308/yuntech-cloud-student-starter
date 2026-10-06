@@ -29,9 +29,13 @@ def build(commit):
     payload = base64.b64encode(gzip.compress(archive.getvalue(), mtime=0)).decode()
     script = """#!/bin/bash
 set -euo pipefail
-dnf install -y nginx python3
+dnf install -y nginx python3 python3-psycopg2 postgresql
 id inspection >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin inspection
 install -d -m 755 /opt/inspection /etc/inspection
+curl --fail --silent --show-error --location \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+    --output /etc/inspection/rds-ca.pem
+chmod 644 /etc/inspection/rds-ca.pem
 base64 --decode <<'W3_ARCHIVE' | tar -xz -C /opt/inspection
 PAYLOAD
 W3_ARCHIVE
@@ -47,6 +51,7 @@ PermissionsStartOnly=true
 RuntimeDirectory=inspection
 Environment=INSPECTION_AUTH_FILE=/run/inspection/app.env
 ExecStartPre=/usr/bin/install -m 640 -o inspection -g inspection /etc/inspection/app.env /run/inspection/app.env
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/opt/inspection/app
 ExecStart=/usr/bin/python3 /opt/inspection/app/service.py
 Restart=on-failure

@@ -51,7 +51,7 @@ class W04ServiceContract(unittest.TestCase):
         no_timezone = json.loads((ROOT / "tests/fixtures/rejected-no-timezone.json").read_text(encoding="utf-8"))
         extra_field = json.loads((ROOT / "tests/fixtures/rejected-extra-field.json").read_text(encoding="utf-8"))
         self.assertEqual(self.request("POST", "/events", success, "reporter-secret")[0], 201)
-        self.assertEqual(self.request("POST", "/events", success, "reporter-secret")[0], 409)
+        self.assertEqual(self.request("POST", "/events", success, "reporter-secret")[0], 200)
         self.assertEqual(self.request("POST", "/events", no_timezone, "reporter-secret"),
                          (400, {"error": "invalid_value", "field": "observed_at"}))
         self.assertEqual(self.request("POST", "/events", extra_field, "reporter-secret"),
