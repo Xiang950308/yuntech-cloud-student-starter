@@ -73,7 +73,9 @@ def make_server(version_file, port=8080, auth_file=None):
         return all(left.get(field) == right.get(field) for field in DB_FIELDS)
 
     def database_error(exc):
-        print(f"database error: {type(exc).__name__}", flush=True)
+        detail = str(exc).replace(db.get("DB_HOST", ""), "<db-host>")
+        detail = detail.replace(db.get("DB_PASSWORD", ""), "<redacted>")
+        print(f"database error: {type(exc).__name__}: {detail}", flush=True)
 
     def role_for(handler):
         scheme, separator, supplied = handler.headers.get("Authorization", "").partition(" ")
