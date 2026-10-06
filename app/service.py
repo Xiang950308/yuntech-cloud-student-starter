@@ -72,6 +72,9 @@ def make_server(version_file, port=8080, auth_file=None):
     def event_matches(left, right):
         return all(left.get(field) == right.get(field) for field in DB_FIELDS)
 
+    def database_error(exc):
+        print(f"database error: {type(exc).__name__}", flush=True)
+
     def role_for(handler):
         scheme, separator, supplied = handler.headers.get("Authorization", "").partition(" ")
         if separator != " " or scheme != "Bearer" or not supplied:
@@ -150,7 +153,8 @@ document.getElementById('load').onclick = async () => {
                                                "FROM events ORDER BY received_at DESC LIMIT 50")
                                 result = [row_to_event(row) for row in cursor.fetchall()]
                         json_response(self, 200, result)
-                    except Exception:
+                    except Exception as exc:
+                        database_error(exc)
                         error(self, 503, "database_unavailable")
                 return
             match = re.fullmatch(r"/events/([^/]+)", path)
@@ -170,7 +174,8 @@ document.getElementById('load').onclick = async () => {
                                                    "FROM events WHERE event_id = %s", (match.group(1),))
                                     row = cursor.fetchone()
                                     event = row_to_event(row) if row else None
-                        except Exception:
+                        except Exception as exc:
+                            database_error(exc)
                             error(self, 503, "database_unavailable")
                             return
                     if event is None:
@@ -272,7 +277,8 @@ document.getElementById('load').onclick = async () => {
                     json_response(self, 200, existing)
                 else:
                     error(self, 409, "duplicate", "event_id")
-            except Exception:
+            except Exception as exc:
+                database_error(exc)
                 error(self, 503, "database_unavailable")
 
         def log_message(self, fmt, *args):
