@@ -29,7 +29,7 @@ def build(commit):
     payload = base64.b64encode(gzip.compress(archive.getvalue(), mtime=0)).decode()
     script = """#!/bin/bash
 set -euo pipefail
-dnf install -y nginx python3 python3-psycopg2 postgresql
+dnf install -y nginx python3 python3-psycopg2 postgresql15
 id inspection >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin inspection
 install -d -m 755 /opt/inspection /etc/inspection
 curl --fail --silent --show-error --location \
